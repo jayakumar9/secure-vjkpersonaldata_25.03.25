@@ -22,7 +22,7 @@ const Dashboard = () => {
   const [showPassword, setShowPassword] = useState({});
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [filePreview, setFilePreview] = useState(null);
-  const { user, logout } = useAuth();
+  const { user, logout, refreshToken } = useAuth();
   const [notification, setNotification] = useState({ show: false, message: '', type: '' });
   const [isAdmin, setIsAdmin] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -35,43 +35,6 @@ const Dashboard = () => {
       setNotification({ show: false, message: '', type: '' });
     }, 3000);
   }, []);
-
-  const fetchAccounts = useCallback(async () => {
-    try {
-      console.log('Fetching accounts...');
-      const token = localStorage.getItem('token');
-      
-      if (!token) {
-        showNotification('No authentication token found', 'error');
-        return;
-      }
-
-      const response = await fetch('/api/accounts', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      console.log('Response status:', response.status);
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to fetch accounts');
-      }
-
-      const data = await response.json();
-      console.log('Fetched accounts:', data.length);
-      setAccounts(data);
-    } catch (error) {
-      console.error('Error fetching accounts:', error);
-      showNotification(error.message, 'error');
-    }
-  }, [showNotification]);
-
-  useEffect(() => {
-    console.log('Accounts state updated:', accounts.length);
-  }, [accounts]);
 
   const checkAdminStatus = useCallback(async () => {
     try {
@@ -88,17 +51,150 @@ const Dashboard = () => {
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          // Try to refresh the token
+          const refreshed = await refreshToken();
+          if (refreshed) {
+            // Retry the request with the new token
+            const newToken = localStorage.getItem('token');
+            const retryResponse = await fetch('/api/accounts/check-admin', {
+              headers: {
+                'Authorization': `Bearer ${newToken}`
+              }
+            });
+            if (retryResponse.ok) {
+              const data = await retryResponse.json();
+              setIsAdmin(data.isAdmin);
+              return;
+            }
+          }
+        }
         throw new Error('Failed to check admin status');
       }
 
       const data = await response.json();
-      console.log('Admin status:', data);
       setIsAdmin(data.isAdmin);
     } catch (error) {
       console.error('Error checking admin status:', error);
       showNotification('Error checking admin status', 'error');
     }
-  }, [showNotification]);
+  }, [showNotification, refreshToken]);
+
+  const fetchAccounts = useCallback(async () => {
+    try {
+      console.log('Starting fetchAccounts...');
+      const token = localStorage.getItem('token');
+      
+      if (!token) {
+        console.error('No token found in localStorage');
+        showNotification('No authentication token found', 'error');
+        return;
+      }
+
+      console.log('Making request to /api/accounts with token:', token.substring(0, 10) + '...');
+
+      const response = await fetch('/api/accounts', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log('Response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries())
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Try to refresh the token
+          console.log('Token expired, attempting refresh...');
+          const refreshed = await refreshToken();
+          console.log('Token refresh result:', refreshed);
+          
+          if (refreshed) {
+            // Retry the request with the new token
+            console.log('Token refreshed, retrying request...');
+            const newToken = localStorage.getItem('token');
+            const retryResponse = await fetch('/api/accounts', {
+              headers: {
+                'Authorization': `Bearer ${newToken}`,
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Content-Type': 'application/json'
+              }
+            });
+            
+            console.log('Retry response:', {
+              status: retryResponse.status,
+              statusText: retryResponse.statusText,
+              headers: Object.fromEntries(retryResponse.headers.entries())
+            });
+            
+            if (retryResponse.ok) {
+              const data = await retryResponse.json();
+              console.log('Retry successful, fetched accounts:', {
+                count: data.length,
+                accounts: data.map(a => ({
+                  id: a._id,
+                  website: a.website,
+                  user: a.user
+                }))
+              });
+              const sortedAccounts = data.sort((a, b) => a.serialNumber - b.serialNumber);
+              setAccounts(sortedAccounts);
+              if (data.length > 0) {
+                checkAdminStatus();
+              }
+              return;
+            }
+          }
+        }
+        const errorData = await response.json();
+        console.error('Error response:', errorData);
+        throw new Error(errorData.message || 'Failed to fetch accounts');
+      }
+
+      const data = await response.json();
+      console.log('Successfully fetched accounts:', {
+        count: data.length,
+        accounts: data.map(a => ({
+          id: a._id,
+          website: a.website,
+          user: a.user
+        }))
+      });
+      
+      // Sort accounts by serial number
+      const sortedAccounts = data.sort((a, b) => a.serialNumber - b.serialNumber);
+      console.log('Sorted accounts:', {
+        count: sortedAccounts.length,
+        accounts: sortedAccounts.map(a => ({
+          id: a._id,
+          website: a.website,
+          serialNumber: a.serialNumber
+        }))
+      });
+      
+      setAccounts(sortedAccounts);
+      
+      // Update admin status if accounts are found
+      if (data.length > 0) {
+        checkAdminStatus();
+      }
+    } catch (error) {
+      console.error('Error in fetchAccounts:', {
+        message: error.message,
+        stack: error.stack
+      });
+      showNotification(error.message, 'error');
+    }
+  }, [showNotification, checkAdminStatus, refreshToken]);
+
+  useEffect(() => {
+    console.log('Accounts state updated:', accounts.length);
+  }, [accounts]);
 
   useEffect(() => {
     fetchAccounts();

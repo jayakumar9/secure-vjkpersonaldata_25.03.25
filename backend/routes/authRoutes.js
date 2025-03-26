@@ -177,4 +177,41 @@ router.get('/me', protect, async (req, res) => {
   }
 });
 
+// @route   POST /api/auth/refresh-token
+// @desc    Refresh JWT token
+// @access  Private
+router.post('/refresh-token', protect, async (req, res) => {
+  try {
+    // Get user from middleware
+    const user = await User.findById(req.user.id).select('-password');
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Generate new token
+    const token = user.getSignedJwtToken();
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error refreshing token'
+    });
+  }
+});
+
 module.exports = router; 

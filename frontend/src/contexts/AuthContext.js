@@ -20,7 +20,8 @@ export const AuthProvider = ({ children }) => {
 
       const response = await fetch('/api/auth/check-status', {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache'
         }
       });
 
@@ -31,7 +32,12 @@ export const AuthProvider = ({ children }) => {
       } else {
         const error = await response.json();
         console.error('Auth check failed:', error);
-        throw new Error(error.message || 'Authentication check failed');
+        // If token is expired or invalid, try to refresh it
+        if (response.status === 401) {
+          await refreshToken();
+        } else {
+          throw new Error(error.message || 'Authentication check failed');
+        }
       }
     } catch (error) {
       console.error('Auth check error:', error);
@@ -40,8 +46,37 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-    // eslint-disable-next-line 
-      }, []);
+  }, []);
+
+  const refreshToken = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('No token to refresh');
+      }
+
+      const response = await fetch('/api/auth/refresh-token', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        localStorage.setItem('token', data.token);
+        setUser(data.user);
+        setIsAuthenticated(true);
+        return true;
+      }
+      throw new Error('Failed to refresh token');
+    } catch (error) {
+      console.error('Token refresh failed:', error);
+      logout();
+      return false;
+    }
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -50,7 +85,17 @@ export const AuthProvider = ({ children }) => {
     } else {
       setLoading(false);
     }
-  }, [checkAuthStatus]);
+
+    // Set up periodic token refresh
+    const refreshInterval = setInterval(() => {
+      const token = localStorage.getItem('token');
+      if (token && isAuthenticated) {
+        refreshToken();
+      }
+    }, 15 * 60 * 1000); // Refresh every 15 minutes
+
+    return () => clearInterval(refreshInterval);
+  }, [checkAuthStatus, isAuthenticated]);
 
   const login = async (username, password) => {
     try {
@@ -97,7 +142,8 @@ export const AuthProvider = ({ children }) => {
     logout,
     isAuthenticated,
     loading,
-    checkAuthStatus
+    checkAuthStatus,
+    refreshToken
   };
 
   return (

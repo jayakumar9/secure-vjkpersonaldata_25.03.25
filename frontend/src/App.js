@@ -5,6 +5,7 @@ import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import DatabaseStatus from './components/DatabaseStatus';
 import ProtectedRoute from './components/ProtectedRoute';
+import TestAccountList from './test/TestAccountList';
 
 function App() {
   return (
@@ -18,6 +19,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/test"
+              element={
+                <ProtectedRoute>
+                  <TestAccountList />
                 </ProtectedRoute>
               }
             />

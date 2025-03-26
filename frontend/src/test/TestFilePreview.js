@@ -1,28 +1,97 @@
 import React from 'react';
 
-const FilePreview = ({ file }) => {
+// Helper function to get proper MIME type
+const getProperContentType = (contentType, fileName) => {
+  // If it's already a proper MIME type, return it
+  if (contentType.includes('/')) {
+    return contentType;
+  }
+
+  // Map common file extensions to MIME types
+  const extensionToMime = {
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'jfif': 'image/jpeg',
+    'png': 'image/png',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'pdf': 'application/pdf',
+    'txt': 'text/plain',
+    'mp4': 'video/mp4',
+    'mp3': 'audio/mpeg',
+  };
+
+  // Try to get MIME type from file extension
+  const extension = fileName.split('.').pop().toLowerCase();
+  if (extensionToMime[extension]) {
+    return extensionToMime[extension];
+  }
+
+  // Try to get MIME type from provided content type
+  if (extensionToMime[contentType.toLowerCase()]) {
+    return extensionToMime[contentType.toLowerCase()];
+  }
+
+  // Default to binary if we can't determine the type
+  return 'application/octet-stream';
+};
+
+const TestFilePreview = ({ file }) => {
   const openFileInNewTab = () => {
     try {
-      const { data, fileName, contentType } = file;
+      const { data, fileName, contentType: originalContentType } = file;
+      
+      // Get proper content type
+      const contentType = getProperContentType(originalContentType, fileName);
+      
+      // Debug logs
+      console.log('File data:', {
+        fileName,
+        originalContentType,
+        contentType,
+        dataLength: data ? data.length : 0,
+        dataStart: data ? data.substring(0, 50) : 'no data'
+      });
 
       // Create a blob URL for viewing
       const createBlobUrl = (base64Data, type) => {
-        // Remove data URL prefix if present
-        const base64Content = base64Data.includes('base64,') 
-          ? base64Data.split('base64,')[1] 
-          : base64Data;
+        console.log('Creating blob for type:', type);
+        
+        try {
+          // Remove data URL prefix if present
+          const base64Content = base64Data.includes('base64,') 
+            ? base64Data.split('base64,')[1] 
+            : base64Data;
+          
+          console.log('Base64 content length:', base64Content.length);
 
-        const binaryString = window.atob(base64Content);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
+          const binaryString = window.atob(base64Content);
+          console.log('Binary string length:', binaryString.length);
+
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          
+          const blob = new Blob([bytes], { type });
+          console.log('Created blob:', {
+            size: blob.size,
+            type: blob.type
+          });
+
+          return URL.createObjectURL(blob);
+        } catch (error) {
+          console.error('Error in createBlobUrl:', error);
+          throw error;
         }
-        const blob = new Blob([bytes], { type });
-        return URL.createObjectURL(blob);
       };
 
+      console.log('Attempting to create blob URL');
       const blobUrl = createBlobUrl(data, contentType);
+      console.log('Created blob URL:', blobUrl);
+
       const newWindow = window.open('', '_blank');
+      console.log('New window opened:', !!newWindow);
       
       if (!newWindow) {
         throw new Error('Popup blocked. Please allow popups to view files.');
@@ -30,6 +99,7 @@ const FilePreview = ({ file }) => {
 
       // Handle different file types
       if (contentType.startsWith('image/')) {
+        console.log('Handling image file');
         newWindow.document.write(`
           <!DOCTYPE html>
           <html>
@@ -49,17 +119,27 @@ const FilePreview = ({ file }) => {
                   max-height: 100vh;
                   object-fit: contain;
                 }
+                .error {
+                  color: red;
+                  padding: 20px;
+                  text-align: center;
+                }
               </style>
             </head>
             <body>
-              <img src="${blobUrl}" alt="${fileName}" />
+              <img 
+                src="${blobUrl}" 
+                alt="${fileName}"
+                onerror="document.body.innerHTML = '<div class=\'error\'>Error loading image</div>'"
+              />
             </body>
           </html>
         `);
       } else if (contentType === 'application/pdf') {
+        console.log('Handling PDF file');
         newWindow.location.href = blobUrl;
       } else if (contentType.startsWith('text/')) {
-        // For text files, display with syntax highlighting if possible
+        console.log('Handling text file');
         newWindow.document.write(`
           <!DOCTYPE html>
           <html>
@@ -75,6 +155,11 @@ const FilePreview = ({ file }) => {
                   white-space: pre-wrap;
                   word-wrap: break-word;
                 }
+                .error {
+                  color: red;
+                  padding: 20px;
+                  text-align: center;
+                }
               </style>
             </head>
             <body>
@@ -84,12 +169,16 @@ const FilePreview = ({ file }) => {
                   .then(response => response.text())
                   .then(text => {
                     document.getElementById('content').textContent = text;
+                  })
+                  .catch(error => {
+                    document.body.innerHTML = '<div class="error">Error loading text: ' + error.message + '</div>';
                   });
               </script>
             </body>
           </html>
         `);
       } else if (contentType.startsWith('video/')) {
+        console.log('Handling video file');
         newWindow.document.write(`
           <!DOCTYPE html>
           <html>
@@ -108,16 +197,27 @@ const FilePreview = ({ file }) => {
                   max-width: 100%;
                   max-height: 100vh;
                 }
+                .error {
+                  color: red;
+                  padding: 20px;
+                  text-align: center;
+                }
               </style>
             </head>
             <body>
-              <video src="${blobUrl}" controls autoplay>
+              <video 
+                src="${blobUrl}" 
+                controls 
+                autoplay
+                onerror="document.body.innerHTML = '<div class=\'error\'>Error loading video</div>'"
+              >
                 Your browser does not support the video tag.
               </video>
             </body>
           </html>
         `);
       } else if (contentType.startsWith('audio/')) {
+        console.log('Handling audio file');
         newWindow.document.write(`
           <!DOCTYPE html>
           <html>
@@ -140,12 +240,22 @@ const FilePreview = ({ file }) => {
                 h1 {
                   margin-bottom: 20px;
                 }
+                .error {
+                  color: red;
+                  padding: 20px;
+                  text-align: center;
+                }
               </style>
             </head>
             <body>
               <div class="container">
                 <h1>${fileName}</h1>
-                <audio src="${blobUrl}" controls autoplay>
+                <audio 
+                  src="${blobUrl}" 
+                  controls 
+                  autoplay
+                  onerror="document.body.innerHTML = '<div class=\'error\'>Error loading audio</div>'"
+                >
                   Your browser does not support the audio tag.
                 </audio>
               </div>
@@ -153,7 +263,7 @@ const FilePreview = ({ file }) => {
           </html>
         `);
       } else {
-        // For unsupported file types, trigger download
+        console.log('Unsupported file type, triggering download');
         const link = document.createElement('a');
         link.href = blobUrl;
         link.download = fileName;
@@ -163,14 +273,16 @@ const FilePreview = ({ file }) => {
       }
 
       newWindow.document.close();
+      console.log('Window document closed');
 
       // Clean up the blob URL after the window is loaded
       setTimeout(() => {
         URL.revokeObjectURL(blobUrl);
+        console.log('Blob URL revoked');
       }, 1000);
 
     } catch (error) {
-      console.error('Error opening file:', error);
+      console.error('Error in openFileInNewTab:', error);
       alert(error.message);
     }
   };
@@ -181,13 +293,13 @@ const FilePreview = ({ file }) => {
       className="text-blue-400 hover:text-blue-500 flex items-center gap-1"
     >
       <span>{file.fileName}</span>
-      <FileIcon contentType={file.contentType} />
+      <TestFileIcon contentType={getProperContentType(file.contentType, file.fileName)} />
     </button>
   );
 };
 
 // File type icons component
-const FileIcon = ({ contentType }) => {
+const TestFileIcon = ({ contentType }) => {
   if (contentType.startsWith('image/')) {
     return (
       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -227,4 +339,4 @@ const FileIcon = ({ contentType }) => {
   }
 };
 
-export default FilePreview; 
+export default TestFilePreview; 

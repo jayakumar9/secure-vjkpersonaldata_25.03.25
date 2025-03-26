@@ -10,6 +10,7 @@ const fileRoutes = require('./routes/fileRoutes');
 const authRoutes = require('./routes/authRoutes');
 const { initGridFS } = require('./config/gridfs');
 const multer = require('multer');
+const setupTestRoutes = require('./test/testRoutes');
 
 // Load env vars
 dotenv.config();
@@ -113,10 +114,10 @@ app.use(helmet({
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  windowMs: process.env.NODE_ENV === 'development' ? 1 * 60 * 1000 : 15 * 60 * 1000, // 1 minute in dev, 15 minutes in prod
+  max: process.env.NODE_ENV === 'development' ? 1000 : 100, // 1000 requests per minute in dev, 100 in prod
+  standardHeaders: true,
+  legacyHeaders: false,
   handler: (req, res) => {
     res.status(429).json({
       success: false,
@@ -139,6 +140,12 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/accounts', accountRoutes);
+
+// Add test routes in development
+if (process.env.NODE_ENV !== 'production') {
+  console.log('Setting up test routes...');
+  setupTestRoutes(app);
+}
 
 // Health Check Endpoint
 app.get('/api/health', async (req, res) => {

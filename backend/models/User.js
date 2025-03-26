@@ -58,11 +58,13 @@ userSchema.methods.getSignedJwtToken = function() {
   return jwt.sign(
     { 
       id: this._id,
-      role: this.role 
+      role: this.role,
+      version: Date.now() // Add a version to help with token invalidation
     },
     process.env.JWT_SECRET || 'your-secret-key',
     {
-      expiresIn: process.env.JWT_EXPIRE || '24h'
+      expiresIn: process.env.JWT_EXPIRE || '1h', // Shorter expiration time
+      algorithm: 'HS256'
     }
   );
 };

@@ -133,9 +133,15 @@ accountSchema.index({ username: 1, website: 1 }, { unique: true });
 // Compound unique index for email and website
 accountSchema.index({ email: 1, website: 1 }, { unique: true });
 
-// Pre-save hook for website logo and serial number
+// Pre-save hook to ensure user field is set
 accountSchema.pre('save', async function(next) {
   try {
+    // If no user is set and this is a new account
+    if (!this.user && this.isNew) {
+      throw new Error('User field is required for new accounts');
+    }
+
+    // If website is modified, update the logo
     if (this.isModified('website')) {
       // Add https:// prefix if no protocol specified
       const websiteUrl = this.website.startsWith('http') ? this.website : `https://${this.website}`;

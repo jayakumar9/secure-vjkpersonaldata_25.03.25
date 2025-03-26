@@ -240,28 +240,62 @@ async function fetchWebsiteLogo(website) {
 // Update account logos periodically
 async function updateAccountLogos() {
   try {
-    const accounts = await Account.find({}).lean();
-    
-    for (const account of accounts) {
-      try {
-        if (!account.website) continue;
-        
-        const logo = await fetchWebsiteLogo(account.website);
-        if (logo && logo !== account.logo) {
-          await Account.findByIdAndUpdate(account._id, { logo });
-          console.log(`Updated logo for account ${account._id}`);
+    const BATCH_SIZE = 10; // Process 10 accounts at a time
+    let processedCount = 0;
+    let errorCount = 0;
+    let successCount = 0;
+
+    // Get total count of accounts
+    const totalAccounts = await Account.countDocuments();
+    console.log(`Starting logo update for ${totalAccounts} accounts`);
+
+    // Process accounts in batches
+    while (processedCount < totalAccounts) {
+      const accounts = await Account.find({})
+        .skip(processedCount)
+        .limit(BATCH_SIZE)
+        .lean();
+
+      // Process each account in the batch
+      for (const account of accounts) {
+        try {
+          if (!account.website) {
+            console.log(`Skipping account ${account._id} - no website`);
+            continue;
+          }
+
+          const logo = await fetchWebsiteLogo(account.website);
+          if (logo && logo.url !== account.logo) {
+            await Account.findByIdAndUpdate(account._id, {
+              logo: logo.url,
+              logoStatus: logo.status,
+              logoMessage: logo.message,
+              logoSource: logo.source
+            });
+            successCount++;
+            console.log(`Updated logo for account ${account._id}`);
+          }
+        } catch (error) {
+          errorCount++;
+          console.error(`Error updating logo for account ${account._id}:`, error.message);
         }
-      } catch (error) {
-        console.error(`Error updating logo for account ${account._id}:`, error);
       }
+
+      processedCount += accounts.length;
+      console.log(`Processed ${processedCount}/${totalAccounts} accounts. Success: ${successCount}, Errors: ${errorCount}`);
     }
+
+    console.log(`Logo update completed. Total: ${totalAccounts}, Success: ${successCount}, Errors: ${errorCount}`);
   } catch (error) {
     console.error('Error in updateAccountLogos:', error);
   }
 }
 
-// Schedule logo updates
-setInterval(updateAccountLogos, 24 * 60 * 60 * 1000); // Run once per day
+// Schedule logo updates with a longer interval (every 12 hours instead of 24)
+setInterval(updateAccountLogos, 12 * 60 * 60 * 1000);
+
+// Trigger initial logo update with a longer delay to ensure database is ready
+setTimeout(updateAccountLogos, 30000);
 
 // Helper function to clean up old file
 const cleanupOldFile = async (oldFilePath) => {
@@ -593,12 +627,72 @@ router.post('/', protect, upload.single('attachedFile'), async (req, res) => {
 // @access  Private
 router.get('/', protect, async (req, res) => {
   try {
-    console.log('Fetching accounts for user:', req.user.id);
+    console.log('Fetching accounts for user:', {
+      userId: req.user.id,
+      userRole: req.user.role,
+      userEmail: req.user.email
+    });
 
-    const accounts = await Account.find({ user: req.user.id })
+    // First, try to find accounts specifically assigned to the user
+    let accounts = await Account.find({ user: req.user.id })
       .sort({ serialNumber: 1 })
       .lean()
       .exec();
+
+    console.log('Found accounts assigned to user:', {
+      count: accounts.length,
+      userAssignedAccounts: accounts.map(a => ({
+        id: a._id,
+        website: a.website,
+        user: a.user
+      }))
+    });
+
+    // If user is admin and no accounts found, get all accounts without user assignment
+    if (req.user.role === 'admin' && accounts.length === 0) {
+      console.log('Admin user - fetching unassigned accounts');
+      
+      // First, let's check all accounts in the system
+      const allAccounts = await Account.find({}).lean().exec();
+      console.log('Total accounts in system:', {
+        count: allAccounts.length,
+        accounts: allAccounts.map(a => ({
+          id: a._id,
+          website: a.website,
+          user: a.user
+        }))
+      });
+
+      accounts = await Account.find({ 
+        $or: [
+          { user: { $exists: false } },
+          { user: null },
+          { user: req.user.id }
+        ]
+      })
+      .sort({ serialNumber: 1 })
+      .lean()
+      .exec();
+
+      console.log('Found unassigned accounts:', {
+        count: accounts.length,
+        unassignedAccounts: accounts.map(a => ({
+          id: a._id,
+          website: a.website,
+          user: a.user
+        }))
+      });
+
+      // Assign these accounts to the admin user
+      if (accounts.length > 0) {
+        console.log('Assigning unassigned accounts to admin user');
+        const updateResult = await Account.updateMany(
+          { $or: [{ user: { $exists: false } }, { user: null }] },
+          { $set: { user: req.user.id } }
+        );
+        console.log('Update result:', updateResult);
+      }
+    }
 
     // Transform accounts to ensure file data is complete
     const transformedAccounts = accounts.map(account => ({
@@ -612,12 +706,23 @@ router.get('/', protect, async (req, res) => {
       } : null
     }));
 
-    console.log('Found accounts:', transformedAccounts.length);
-    console.log('Sample file data:', transformedAccounts.find(a => a.attachedFile)?.attachedFile || 'No files found');
+    console.log('Returning transformed accounts:', {
+      count: transformedAccounts.length,
+      accounts: transformedAccounts.map(a => ({
+        id: a._id,
+        website: a.website,
+        user: a.user
+      }))
+    });
 
     res.json(transformedAccounts);
   } catch (error) {
-    console.error('Error fetching accounts:', error);
+    console.error('Error fetching accounts:', {
+      error: error.message,
+      stack: error.stack,
+      userId: req.user?.id,
+      userRole: req.user?.role
+    });
     res.status(500).json({ 
       message: 'Error fetching accounts',
       details: error.message 
@@ -819,8 +924,5 @@ router.post('/update-logos', protect, authorize('admin'), async (req, res) => {
     res.status(500).json({ message: 'Error updating logos' });
   }
 });
-
-// Trigger initial logo update when server starts
-setTimeout(updateAccountLogos, 5000);
 
 module.exports = router; 
